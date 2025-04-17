@@ -5,6 +5,7 @@ import json
 import os
 import random
 import sys
+import time
 from copy import copy
 from itertools import product
 
@@ -300,6 +301,7 @@ def run(args):
                 shuffle=False, num_workers=args.num_workers, 
                 collate_fn=collate_fn
             )
+    start_time = time.time()  
     if task == "zeroshot_classification":
         zeroshot_templates = dataset.templates if hasattr(dataset, "templates") else None
         if args.verbose:
@@ -402,13 +404,17 @@ def run(args):
         )
     else:
         raise ValueError("Unsupported task: {}. task should be `zeroshot_classification`, `zeroshot_retrieval`, `linear_probe`, or `captioning`".format(task))
+    
+    end_time = time.time()
     dump = {
         "dataset": args.dataset,
         "model": args.model,
         "pretrained": args.pretrained,
+        "model_type": args.model_type,
         "task": task,
         "metrics": metrics,
         "language": args.language,
+        "duration": (end_time - start_time)
     }
     if hasattr(dataset, "classes") and dataset.classes and args.dump_classnames:
         dump["classnames"] = dataset.classes
