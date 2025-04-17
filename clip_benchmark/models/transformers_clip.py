@@ -51,7 +51,7 @@ class OVWrapper:
         input_dict = {k: v.cpu() for k, v in text.items()}
         if "pixel_values" not in input_dict:
             input_dict["pixel_values"] = self.inputs["pixel_values"]
-        return torch.from_numpy(self.model(input_dict)[2]).to(self.model.device)
+        return torch.from_numpy(self.model(input_dict)[2])
 
     def encode_image(self, image):
         # we get an extended dimension possibly due to the collation in dataloader
@@ -60,7 +60,7 @@ class OVWrapper:
             input_dict["input_ids"] = self.inputs["input_ids"]
         if "attention_mask" not in input_dict:
             input_dict["attention_mask"] = self.inputs["attention_mask"]
-        return torch.from_numpy(self.model(input_dict)[3]).to(self.model.device)
+        return torch.from_numpy(self.model(input_dict)[3])
 
     def eval(self):
         pass
@@ -83,14 +83,41 @@ class ONNXWrapper:
     def __init__(self, model_path, inputs):
         self.session = ort.InferenceSession(model_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
         self.inputs = inputs
+        self._set_output_names(config_path)
 
+    def _set_output_names(self, config_path):
+        output_names = [output.name for output in self.session.get_outputs()]
+
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+        except FileNotFoundError:
+            config = {}
+
+        self.text_output = config.get("outputs", {}).get(
+            "text_output", "text_embeds")
+        self.image_output = config.get("outputs", {}).get(
+            "image_output", "image_embeds")
+
+        assert self.text_output in output_names and self.image_output in output_names, (
+            f"Model does not have `{self.text_output}` or `{self.image_output}` output.\n"
+            f"Suggestion: Ensure the ONNX model output names are correct. "
+            f"You can specify them in the config file ({config_path}) with the following structure:\n\n"
+            "{\n"
+            '  "outputs": {\n'
+            '    "text_output": "text_embeds",\n'
+            '    "image_output": "image_embeds"\n'
+            "  }\n"
+            "}"
+        )
+    
     def encode_text(self, text):
         input_dict = {k: v.cpu().numpy() for k, v in text.items()}
         if "pixel_values" not in input_dict:
             input_dict["pixel_values"] = self.inputs["pixel_values"].cpu().numpy()
 
-        outputs = self.session.run(["onnx::MatMul_3309"], input_dict)
-        return torch.from_numpy(outputs[0]).cuda()
+        outputs = self.session.run([self.text_output], input_dict)
+        return torch.from_numpy(outputs[0])
 
     def encode_image(self, image):
         input_dict = {k: v.squeeze(1).cpu().numpy() for k, v in image.items()}
@@ -99,8 +126,8 @@ class ONNXWrapper:
         if "attention_mask" not in input_dict:
             input_dict["attention_mask"] = self.inputs["attention_mask"].cpu().numpy()
 
-        outputs = self.session.run(["onnx::Transpose_3303"], input_dict)
-        return torch.from_numpy(outputs[0]).cuda()
+        outputs = self.session.run([self.image_output], input_dict)
+        return torch.from_numpy(outputs[0])
 
     def eval(self):
         pass
