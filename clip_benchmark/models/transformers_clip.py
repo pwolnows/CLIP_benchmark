@@ -100,7 +100,7 @@ class ONNXWrapper:
             "image_output", "image_embeds")
 
         assert self.text_output in output_names and self.image_output in output_names, (
-            f"Model does not have `{self.text_output}` or `{self.image_output}` output.\n"
+            f"Model does not have `{self.text_output}` or `{self.image_output}` among outputs {output_names}.\n"
             f"Suggestion: Ensure the ONNX model output names are correct. "
             f"You can specify them in the config file ({config_path}) with the following structure:\n\n"
             "{\n"
