@@ -87,7 +87,7 @@ def load_optimum_intel_clip(model_name, pretrained, cache_dir, device):
         ov_path = f"{cache_dir}/{ov_path}"
 
     config = load_json_file("openvino_device.json")
-    ov_device = config.get("device", device)
+    ov_device = config.get("device", device).upper()
 
     compiled_model = core.compile_model(ov_path, ov_device)
     inputs = processor(text=text_descriptions, images=[image], return_tensors="pt", padding=True)
