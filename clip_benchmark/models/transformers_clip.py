@@ -1,11 +1,12 @@
+import json
+from pathlib import Path
+import requests
 import torch
 from torch import nn
 from transformers import AutoModel, AutoProcessor
 import onnxruntime as ort
 import openvino as ov
 from PIL import Image
-import requests
-from pathlib import Path
 
 
 sample_path = Path("coco.jpg")
@@ -17,6 +18,17 @@ if not sample_path.exists():
 image = Image.open(sample_path)
 input_labels = ["cat", "dog", "wolf", "tiger", "man", "horse", "frog", "tree", "house", "computer",]
 text_descriptions = [f"This is a photo of a {label}" for label in input_labels]
+
+
+
+def load_json_file(file_path):
+    try:
+        with open(file_path, "r") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+
+    return data
 
 
 class TransformerWrapper(nn.Module):
@@ -71,7 +83,13 @@ def load_optimum_intel_clip(model_name, pretrained, cache_dir, device):
 
     core = ov.Core()
     ov_path = f"{ckpt}/openvino_model.xml"
-    compiled_model = core.compile_model(ov_path, "CPU")
+    if cache_dir is not None:
+        ov_path = f"{cache_dir}/{ov_path}"
+
+    config = load_json_file("openvino_device.json")
+    ov_device = config.get("device", device)
+
+    compiled_model = core.compile_model(ov_path, ov_device)
     inputs = processor(text=text_descriptions, images=[image], return_tensors="pt", padding=True)
     model = OVWrapper(compiled_model, inputs)
     transforms = lambda image: processor(images=image, return_tensors="pt")
@@ -80,7 +98,7 @@ def load_optimum_intel_clip(model_name, pretrained, cache_dir, device):
 
 
 class ONNXWrapper:
-    def __init__(self, model_path, inputs):
+    def __init__(self, model_path, inputs, config_path="config.json"):
         self.session = ort.InferenceSession(model_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
         self.inputs = inputs
         self._set_output_names(config_path)
@@ -88,11 +106,7 @@ class ONNXWrapper:
     def _set_output_names(self, config_path):
         output_names = [output.name for output in self.session.get_outputs()]
 
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-        except FileNotFoundError:
-            config = {}
+        config = load_json_file(config_path)
 
         self.text_output = config.get("outputs", {}).get(
             "text_output", "text_embeds")
@@ -110,14 +124,14 @@ class ONNXWrapper:
             "  }\n"
             "}"
         )
-    
+
     def encode_text(self, text):
         input_dict = {k: v.cpu().numpy() for k, v in text.items()}
         if "pixel_values" not in input_dict:
             input_dict["pixel_values"] = self.inputs["pixel_values"].cpu().numpy()
 
         outputs = self.session.run([self.text_output], input_dict)
-        return torch.from_numpy(outputs[0])
+        return torch.from_numpy(outputs[0]).to('cpu')
 
     def encode_image(self, image):
         input_dict = {k: v.squeeze(1).cpu().numpy() for k, v in image.items()}
@@ -127,7 +141,7 @@ class ONNXWrapper:
             input_dict["attention_mask"] = self.inputs["attention_mask"].cpu().numpy()
 
         outputs = self.session.run([self.image_output], input_dict)
-        return torch.from_numpy(outputs[0])
+        return torch.from_numpy(outputs[0]).to('cpu')
 
     def eval(self):
         pass
@@ -137,8 +151,14 @@ def load_onnx_clip(model_name, pretrained, cache_dir, device):
     processor = AutoProcessor.from_pretrained(ckpt)
 
     onnx_path = f"{ckpt}/model.onnx"
+    onnx_config_path = f"{ckpt}/config.json"
+
+    if cache_dir is not None:
+        onnx_path = f"{cache_dir}/{onnx_path}"
+        onnx_config_path = f"{cache_dir}/{onnx_path}"
+
     inputs = processor(text=text_descriptions, images=[image], return_tensors="pt", padding=True)
-    model = ONNXWrapper(onnx_path, inputs)
+    model = ONNXWrapper(onnx_path, inputs, onnx_config_path)
     # core = ov.Core()
     # compiled_model = core.compile_model(onnx_path, "CPU")
     # model = OVWrapper(compiled_model, inputs)
